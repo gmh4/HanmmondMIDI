@@ -57,6 +57,26 @@
        color:#b5c9da; background:#0c1116; border:1px solid #1b2530; border-radius:8px; padding:10px; max-height:140px; overflow:auto}
   .kbd{background:#11161c; padding:6px 8px; border-radius:6px; border:1px solid #24303a; font-family: ui-monospace, Menlo, monospace; font-size:12px}
   .hints{color:#a9bfce; font-size:12px}
+
+/* On-screen keyboard */
+.piano-wrap { padding:12px; background:#0f151b; border:1px solid #1b2430; border-radius:10px; margin-top:10px; }
+.piano { position: relative; user-select:none; height: 180px; display:inline-block; }
+.key { position: relative; display:inline-block; box-sizing:border-box; cursor: pointer; }
+.key.white {
+  width: 28px; height: 180px; border:1px solid #1b2430;
+  background: linear-gradient(#18212a, #10171d);
+  border-radius:0 0 6px 6px;
+}
+.key.white.active { background: linear-gradient(#2a7e59, #1f5d44); }
+.key.black {
+  position: absolute; width: 18px; height: 110px;
+  background: linear-gradient(#0a0e12, #0a0e12 60%, #091016);
+  border:1px solid #1b2430; border-radius:0 0 6px 6px; z-index: 3;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+.key.black.active { background: linear-gradient(#2a7e59, #1f5d44); }
+.piano-label { color:#9db0c3; font-size:12px; margin-top:6px; }
+
 </style>
 </head>
 <body>
@@ -148,6 +168,14 @@
       • Map your footswitch to CC64 for slow/fast.
     </div>
     <div id="log" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="section-title">On-screen Keyboard</div>
+  <div class="piano-wrap">
+    <div id="piano" class="piano" aria-label="On-screen keyboard"></div>
+    <div class="piano-label">Click/tap keys to play (C3–C5). Works without a MIDI controller.</div>
   </div>
 </div>
 
@@ -595,6 +623,139 @@ window.addEventListener('keyup', (e)=>{
   const map = {'a':60,'w':61,'s':62,'e':63,'d':64,'f':65,'t':66,'g':67,'y':68,'h':69,'u':70,'j':71,'k':72};
   if(map[e.key]) stopNote(map[e.key]);
 });
+
+// ======= ON-SCREEN KEYBOARD (C3..C5) =======
+(function(){
+  const piano = document.getElementById('piano');
+  if(!piano) return;
+
+  const WHITE_W = 28, BLACK_W = 18, BLACK_H = 110;
+  const isBlack = n => [1,3,6,8,10].includes(n % 12); // C# D# F# G# A#
+  const isWhite = n => !isBlack(n);
+
+  // Build notes C3 (48) to C5 (72)
+  const START = 48, END = 72;
+
+  // First pass: lay out whites left-to-right, record x positions
+  let x = 0;
+  const whitePositions = new Map(); // midi -> x
+  for(let n=START; n<=END; n++){
+    if(isWhite(n)){
+      const key = document.createElement('div');
+      key.className = 'key white';
+      key.dataset.note = n;
+      key.style.left = x + 'px';
+      key.style.width = WHITE_W + 'px';
+      key.style.height = '180px';
+      key.style.display = 'inline-block';
+      // Mouse handlers
+      key.addEventListener('mousedown', async ()=>{
+        key.classList.add('active');
+        if(typeof setupAudio === 'function' && !started){
+          setupAudio();
+          if(typeof ctx !== 'undefined' && ctx && ctx.state === 'suspended') { try { await ctx.resume(); } catch{} }
+        }
+        if(typeof startNote === 'function') startNote(n, 110);
+      });
+      key.addEventListener('mouseup', ()=>{
+        key.classList.remove('active');
+        if(typeof stopNote === 'function') stopNote(n);
+      });
+      key.addEventListener('mouseleave', ()=>{
+        key.classList.remove('active');
+        if(typeof stopNote === 'function') stopNote(n);
+      });
+      piano.appendChild(key);
+      whitePositions.set(n, x);
+      x += WHITE_W;
+    }
+  }
+  // Make the container wide enough for all whites
+  piano.style.width = x + 'px';
+
+  // Second pass: place blacks between whites
+  for(let n=START; n<=END; n++){
+    if(isBlack(n)){
+      // Black sits between its adjacent whites. Anchor to the previous white's x
+      const prevWhite = n - 1; // the white below/left of this black
+      // Find nearest white to place relative; skip if out of range
+      let anchorWhite = prevWhite;
+      while(anchorWhite >= START && !whitePositions.has(anchorWhite)) anchorWhite--;
+      if(!whitePositions.has(anchorWhite)) continue;
+      const baseX = whitePositions.get(anchorWhite);
+      // Offset to center black between whites
+      const left = baseX + WHITE_W - (BLACK_W/2);
+      const key = document.createElement('div');
+      key.className = 'key black';
+      key.dataset.note = n;
+      key.style.left = left + 'px';
+      key.style.top = '0px';
+      key.style.width = BLACK_W + 'px';
+      key.style.height = BLACK_H + 'px';
+      // Mouse handlers
+      key.addEventListener('mousedown', async ()=>{
+        key.classList.add('active');
+        if(typeof setupAudio === 'function' && !started){
+          setupAudio();
+          if(typeof ctx !== 'undefined' && ctx && ctx.state === 'suspended') { try { await ctx.resume(); } catch{} }
+        }
+        if(typeof startNote === 'function') startNote(n, 110);
+      });
+      key.addEventListener('mouseup', ()=>{
+        key.classList.remove('active');
+        if(typeof stopNote === 'function') stopNote(n);
+      });
+      key.addEventListener('mouseleave', ()=>{
+        key.classList.remove('active');
+        if(typeof stopNote === 'function') stopNote(n);
+      });
+      piano.appendChild(key);
+    }
+  }
+
+  // Touch support
+  piano.addEventListener('touchstart', (e)=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
+      const el = document.elementFromPoint(t.clientX, t.clientY)?.closest('.key');
+      if(el && !el.classList.contains('active')){
+        el.classList.add('active');
+        const note = parseInt(el.dataset.note,10);
+        if(typeof setupAudio === 'function' && !started){
+          setupAudio();
+          if(typeof ctx !== 'undefined' && ctx && ctx.state === 'suspended') { try { ctx.resume(); } catch{} }
+        }
+        if(typeof startNote === 'function') startNote(note, 110);
+      }
+    }
+  }, {passive:false});
+  piano.addEventListener('touchmove', (e)=>{
+    e.preventDefault();
+    // release all currently active keys first
+    piano.querySelectorAll('.key.active').forEach(el=>{
+      el.classList.remove('active');
+      const note = parseInt(el.dataset.note,10);
+      if(typeof stopNote === 'function') stopNote(note);
+    });
+    for(const t of e.changedTouches){
+      const el = document.elementFromPoint(t.clientX, t.clientY)?.closest('.key');
+      if(el && !el.classList.contains('active')){
+        el.classList.add('active');
+        const note = parseInt(el.dataset.note,10);
+        if(typeof startNote === 'function') startNote(note, 110);
+      }
+    }
+  }, {passive:false});
+  piano.addEventListener('touchend', (e)=>{
+    e.preventDefault();
+    piano.querySelectorAll('.key.active').forEach(el=>{
+      el.classList.remove('active');
+      const note = parseInt(el.dataset.note,10);
+      if(typeof stopNote === 'function') stopNote(note);
+    });
+  }, {passive:false});
+})();
+
 </script>
 </body>
 </html>
