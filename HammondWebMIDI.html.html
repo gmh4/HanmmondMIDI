@@ -166,4 +166,435 @@ let drawbarNotches = [8,8,8,0,0,0,0,0,0];
 
 // ======= AUDIO GRAPH =======
 let ctx, master, organBus, preDrive, drive, driveCurve;
-let vibLFO, vibGainCents, chorusDelayA, chorusDelayB, chorusLFOA,
+let vibLFO, vibGainCents, chorusDelayA, chorusDelayB, chorusLFOA, chorusLFOB, chorusMixA, chorusMixB;
+let hornLFO, drumLFO, hornPan, drumPan, hornDelay, drumDelay, hornAM, drumAM, splitLP, splitHP;
+let const1, constSmall; // DC offsets for modulation
+let started = false;
+let heldCount = 0;
+const activeNotes = new Map(); // note -> {gates:GainNode[], osc:OscNode[], vibLinks:[], gate, killTime}
+
+function makeDriveCurve(amount, n=2048){
+  // Simple arctan drive
+  const k = amount * 3 + 0.0001;
+  const curve = new Float32Array(n);
+  for(let i=0;i<n;i++){
+    const x = (i / (n-1)) * 2 - 1;
+    curve[i] = Math.atan(k * x) / Math.atan(k);
+  }
+  return curve;
+}
+
+function setupAudio(){
+  if (started) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)({latencyHint:"interactive"});
+
+  // Master
+  master = ctx.createGain(); master.gain.value = 0.9;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -10; comp.knee.value = 8; comp.ratio.value = 2; comp.attack.value = 0.003; comp.release.value = 0.2;
+  master.connect(comp).connect(ctx.destination);
+
+  // Bus before drive
+  organBus = ctx.createGain(); organBus.gain.value = 1.0;
+
+  // Overdrive
+  preDrive = ctx.createGain(); preDrive.gain.value = 1.0;
+  drive = ctx.createWaveShaper();
+  driveCurve = makeDriveCurve(parseFloat(document.getElementById('drive').value));
+  drive.curve = driveCurve; drive.oversample = '4x';
+
+  organBus.connect(preDrive).connect(drive);
+
+  // Split for Leslie
+  splitLP = ctx.createBiquadFilter(); splitLP.type='lowpass'; splitLP.frequency.value = 800; splitLP.Q.value = 0.707;
+  splitHP = ctx.createBiquadFilter(); splitHP.type='highpass'; splitHP.frequency.value = 800; splitHP.Q.value = 0.707;
+  const tee = ctx.createGain(); tee.gain.value = 1;
+  drive.connect(tee);
+  tee.connect(splitLP); tee.connect(splitHP);
+
+  // Low rotor ("drum") branch
+  drumDelay = ctx.createDelay(0.02); drumDelay.delayTime.value = 0.001;
+  drumAM = ctx.createGain(); drumAM.gain.value = 1.0;
+  drumPan = ctx.createStereoPanner(); drumPan.pan.value = 0;
+  splitLP.connect(drumDelay).connect(drumAM).connect(drumPan).connect(master);
+
+  // High rotor ("horn") branch
+  hornDelay = ctx.createDelay(0.02); hornDelay.delayTime.value = 0.001;
+  hornAM = ctx.createGain(); hornAM.gain.value = 1.0;
+  hornPan = ctx.createStereoPanner(); hornPan.pan.value = 0;
+  splitHP.connect(hornDelay).connect(hornAM).connect(hornPan).connect(master);
+
+  // LFOs for Leslie
+  hornLFO = ctx.createOscillator(); hornLFO.type='sine'; hornLFO.frequency.value = 0.8; // chorale default
+  drumLFO = ctx.createOscillator(); drumLFO.type='sine'; drumLFO.frequency.value = 0.6;
+  const lfoScaleHorn = ctx.createGain(); lfoScaleHorn.gain.value = 1.0;
+  const lfoScaleDrum = ctx.createGain(); lfoScaleDrum.gain.value = 1.0;
+  hornLFO.connect(lfoScaleHorn); drumLFO.connect(lfoScaleDrum);
+
+  // Constant sources (DC) for offsetting AudioParams
+  const1 = ctx.createConstantSource(); const1.offset.value = 1.0; const1.start();
+  constSmall = ctx.createConstantSource(); constSmall.offset.value = 0.001; constSmall.start();
+
+  // Mod destinations: pan, delay, amplitude
+  // Panning: -1..1
+  lfoScaleHorn.connect(hornPan.pan);
+  lfoScaleDrum.connect(drumPan.pan);
+
+  // Doppler via tiny delay modulation: base + scaled LFO
+  const hornDelayScale = ctx.createGain(); hornDelayScale.gain.value = 0.0012; // seconds
+  const drumDelayScale = ctx.createGain(); drumDelayScale.gain.value = 0.0008;
+  lfoScaleHorn.connect(hornDelayScale).connect(hornDelay.delayTime);
+  lfoScaleDrum.connect(drumDelayScale).connect(drumDelay.delayTime);
+  constSmall.connect(hornDelay.delayTime);
+  constSmall.connect(drumDelay.delayTime);
+
+  // Amplitude modulation: sum of DC(1-depth) + depth*LFO
+  const hornAMDepth = ctx.createGain(); hornAMDepth.gain.value = 0.20; // depth
+  const drumAMDepth = ctx.createGain(); drumAMDepth.gain.value = 0.10;
+  const hornBase = ctx.createConstantSource(); hornBase.offset.value = 1 - hornAMDepth.gain.value; hornBase.start();
+  const drumBase = ctx.createConstantSource(); drumBase.offset.value = 1 - drumAMDepth.gain.value; drumBase.start();
+  lfoScaleHorn.connect(hornAMDepth).connect(hornAM.gain);
+  lfoScaleDrum.connect(drumAMDepth).connect(drumAM.gain);
+  hornBase.connect(hornAM.gain);
+  drumBase.connect(drumAM.gain);
+
+  hornLFO.start(); drumLFO.start();
+
+  // Vibrato / Chorus
+  vibLFO = ctx.createOscillator(); vibLFO.type='sine'; vibLFO.frequency.value = 6.0; vibLFO.start();
+  vibGainCents = ctx.createGain(); vibGainCents.gain.value = 12; // cents peak
+  vibLFO.connect(vibGainCents);
+
+  // Simple chorus: two short modulated delays mixed in
+  chorusDelayA = ctx.createDelay(0.03); chorusDelayB = ctx.createDelay(0.03);
+  chorusDelayA.delayTime.value = 0.015; chorusDelayB.delayTime.value = 0.020;
+  chorusLFOA = ctx.createOscillator(); chorusLFOB = ctx.createOscillator();
+  chorusLFOA.type='sine'; chorusLFOB.type='sine'; chorusLFOA.frequency.value=0.8; chorusLFOB.frequency.value=0.9;
+  const chorusScaleA = ctx.createGain(); const chorusScaleB = ctx.createGain();
+  chorusScaleA.gain.value = 0.004; chorusScaleB.gain.value = 0.004;
+  chorusLFOA.connect(chorusScaleA).connect(chorusDelayA.delayTime);
+  chorusLFOB.connect(chorusScaleB).connect(chorusDelayB.delayTime);
+  chorusLFOA.start(); chorusLFOB.start();
+  chorusMixA = ctx.createGain(); chorusMixB = ctx.createGain();
+  chorusMixA.gain.value = 0.0; chorusMixB.gain.value = 0.0; // off by default
+  drive.connect(chorusDelayA).connect(chorusMixA).connect(master);
+  drive.connect(chorusDelayB).connect(chorusMixB).connect(master);
+
+  document.getElementById('leslieLED').classList.add('on');
+  started = true;
+}
+
+function setDrive(amount){
+  drive.curve = makeDriveCurve(amount);
+}
+
+function setVibratoMode(mode){
+  // Modes inspired by Hammond: V1..V3 vibrato depths, C1..C3 chorus mix levels
+  let detune = 0, chorus = 0;
+  switch(mode){
+    case 'v1': detune = 5; break;
+    case 'v2': detune = 10; break;
+    case 'v3': detune = 15; break;
+    case 'c1': detune = 4; chorus = 0.08; break;
+    case 'c2': detune = 7; chorus = 0.12; break;
+    case 'c3': detune = 10; chorus = 0.18; break;
+    default: detune = 0; chorus = 0;
+  }
+  vibGainCents.gain.setTargetAtTime(detune, ctx.currentTime, 0.05);
+  chorusMixA.gain.setTargetAtTime(chorus, ctx.currentTime, 0.1);
+  chorusMixB.gain.setTargetAtTime(chorus, ctx.currentTime, 0.1);
+}
+
+function setLeslie(mode){
+  // Frequencies and ramping to emulate spin-up/down
+  const now = ctx.currentTime;
+  const setFreq = (osc, value, tau)=> osc.frequency.setTargetAtTime(value, now, tau);
+  const hornTau = 0.8, drumTau = 2.0;
+
+  if(mode==='stop'){
+    setFreq(hornLFO, 0.01, hornTau);
+    setFreq(drumLFO, 0.01, drumTau);
+  } else if(mode==='chorale'){
+    setFreq(hornLFO, 0.8, hornTau);
+    setFreq(drumLFO, 0.6, drumTau);
+  } else if(mode==='tremolo'){
+    setFreq(hornLFO, 6.5, hornTau);
+    setFreq(drumLFO, 4.5, drumTau);
+  } else if(mode==='brake'){
+    setFreq(hornLFO, 0.0001, 0.3);
+    setFreq(drumLFO, 0.0001, 0.6);
+  }
+}
+
+// ======= NOTE ENGINE =======
+function startNote(note, velocity=100){
+  if(!started) return;
+  if(activeNotes.has(note)) return;
+  const freq = midiToFreq(note);
+  const gate = ctx.createGain();
+  gate.gain.setValueAtTime(0, ctx.currentTime);
+  gate.gain.linearRampToValueAtTime(1, ctx.currentTime + 0.004);
+
+  // Each note: 9 sines with drawbar gains
+  const oscs = [];
+  const vibLinks = [];
+
+  for(let i=0;i<9;i++){
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.value = freq * DB_RATIOS[i];
+    // Vibrato via detune (cents)
+    const link = vibGainCents.connect(o.detune);
+    vibLinks.push(link);
+
+    const g = ctx.createGain();
+    // Drawbar notch 0..8 -> linear level 0..1
+    const level = drawbarNotches[i] / 8;
+    g.gain.value = level;
+    o.connect(g).connect(gate);
+    o.start();
+    oscs.push({osc:o, gain:g});
+  }
+
+  // Key click
+  const clickLevel = parseFloat(document.getElementById('click').value);
+  if(clickLevel>0){
+    const click = ctx.createBufferSource();
+    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate*0.02), ctx.sampleRate);
+    const ch = buf.getChannelData(0);
+    for(let i=0;i<ch.length;i++){ ch[i] = (Math.random()*2-1) * Math.exp(-i/(ctx.sampleRate*0.003)); }
+    click.buffer = buf;
+    const cg = ctx.createGain(); cg.gain.value = clickLevel * 0.4;
+    click.connect(cg).connect(gate);
+    click.start();
+  }
+
+  // Percussion (single-trigger when no other keys held)
+  const percOn = document.getElementById('percOn').checked;
+  if(percOn && heldCount===0){
+    const which = document.getElementById('percHarm').value; // '2' or '3'
+    const fast = document.getElementById('percDecay').value === 'fast';
+    const soft = document.getElementById('percVol').value === 'soft';
+    const p = ctx.createOscillator();
+    p.type = 'sine';
+    const ratio = (which==='2') ? 2.0 : 3.0;
+    p.frequency.value = freq * ratio;
+    const pg = ctx.createGain();
+    pg.gain.setValueAtTime(soft?0.25:0.4, ctx.currentTime);
+    pg.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (fast?0.25:0.65));
+    p.connect(pg).connect(gate);
+    p.start(); p.stop(ctx.currentTime + 1.0);
+  }
+
+  // Expression and Drive path
+  const expr = parseFloat(document.getElementById('expr').value);
+  const exprG = ctx.createGain(); exprG.gain.value = expr;
+
+  gate.connect(exprG).connect(organBus);
+
+  activeNotes.set(note, {gate, oscs, vibLinks});
+  heldCount++;
+}
+
+function stopNote(note){
+  if(!activeNotes.has(note) || !started) return;
+  const data = activeNotes.get(note);
+  const now = ctx.currentTime;
+  data.gate.gain.cancelScheduledValues(now);
+  data.gate.gain.setTargetAtTime(0.0001, now, 0.02);
+  const stopAt = now + 0.12;
+  data.oscs.forEach(o=> o.osc.stop(stopAt));
+  setTimeout(()=>{
+    try { data.vibLinks.forEach(l=> l.disconnect && l.disconnect()); } catch{}
+  }, 200);
+  activeNotes.delete(note);
+  heldCount = Math.max(0, heldCount - 1);
+}
+
+// ======= UI: DRAWBARS =======
+const drawbarsEl = document.getElementById('drawbars');
+function buildDrawbars(){
+  drawbarsEl.innerHTML = '';
+  DB_LABELS.forEach((lab, i)=>{
+    const wrap = document.createElement('div'); wrap.className='db';
+    const val = document.createElement('div'); val.className='value'; val.textContent = drawbarNotches[i];
+    const s = document.createElement('input'); s.className='vslider'; s.type='range'; s.min=0; s.max=8; s.step=1; s.value = drawbarNotches[i];
+    s.addEventListener('input', ()=>{
+      drawbarNotches[i] = parseInt(s.value,10);
+      val.textContent = s.value;
+      // Live update gains of currently sounding notes
+      if(ctx){
+        activeNotes.forEach(n=>{
+          const g = n.oscs[i].gain;
+          g.gain.setTargetAtTime(drawbarNotches[i]/8, ctx.currentTime, 0.01);
+        });
+      }
+    });
+    const lbl = document.createElement('label'); lbl.textContent = lab;
+    wrap.appendChild(lbl); wrap.appendChild(s); wrap.appendChild(val);
+    drawbarsEl.appendChild(wrap);
+  });
+}
+buildDrawbars();
+
+// ======= UI: EVENT HOOKS =======
+document.getElementById('startBtn').addEventListener('click', async()=>{
+  setupAudio();
+  await ctx.resume();
+  setDrive(parseFloat(document.getElementById('drive').value));
+  setVibratoMode(document.getElementById('vibMode').value);
+  setLeslie('chorale');
+  log('Audio started.');
+});
+
+document.getElementById('drive').addEventListener('input', e=>{
+  if(!started) return;
+  setDrive(parseFloat(e.target.value));
+});
+
+document.getElementById('expr').addEventListener('input', e=>{
+  if(!started) return;
+  const val = parseFloat(e.target.value);
+  // expression is applied per-note on note creation; for live notes, scale their gate
+  activeNotes.forEach(n=>{
+    n.gate.gain.setTargetAtTime(val, ctx.currentTime, 0.03);
+  });
+});
+
+document.getElementById('vibMode').addEventListener('change', e=>{
+  if(!started) return;
+  setVibratoMode(e.target.value);
+});
+
+Array.from(document.querySelectorAll('[data-leslie]')).forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    if(!started) return;
+    const mode = btn.getAttribute('data-leslie');
+    setLeslie(mode);
+    log('Leslie ->', mode);
+  });
+});
+
+// ======= MIDI =======
+let midi, midiInSel, currentInput;
+midiInSel = document.getElementById('midiIn');
+
+function handleMIDIMessage(e){
+  const [st, d1, d2] = e.data;
+  const type = st & 0xF0;
+  const chan = (st & 0x0F) + 1;
+  if(type===0x90){ // note on
+    if(d2===0) { stopNote(d1); return; }
+    startNote(d1, d2);
+  } else if(type===0x80){ // note off
+    stopNote(d1);
+  } else if(type===0xB0){ // CC
+    const cc = d1, val = d2;
+    // Drawbars CC20..28
+    if(cc>=20 && cc<=28){
+      const idx = cc - 20;
+      const notch = Math.round((val/127)*8);
+      drawbarNotches[idx] = notch;
+      // Update UI
+      const slider = drawbarsEl.querySelectorAll('.vslider')[idx];
+      const display = drawbarsEl.querySelectorAll('.value')[idx];
+      slider.value = notch; display.textContent = notch;
+      // Update live notes
+      if(started){
+        activeNotes.forEach(n=>{
+          const g = n.oscs[idx].gain;
+          g.gain.setTargetAtTime(notch/8, ctx.currentTime, 0.01);
+        });
+      }
+    } else if(cc===11){ // expression
+      const v = val/127;
+      document.getElementById('expr').value = v;
+      if(started){
+        activeNotes.forEach(n=> n.gate.gain.setTargetAtTime(v, ctx.currentTime, 0.03));
+      }
+    } else if(cc===64){ // sustain pedal used as Leslie toggle: <64 = chorale, >=64 = tremolo
+      if(started){
+        setLeslie(val>=64 ? 'tremolo' : 'chorale');
+      }
+    } else if(cc===1){ // mod wheel cycles vib modes
+      const modes = ['off','v1','v2','v3','c1','c2','c3'];
+      const ix = Math.floor((val/127)* (modes.length-1) + 0.0001);
+      const mode = modes[ix];
+      document.getElementById('vibMode').value = mode;
+      if(started) setVibratoMode(mode);
+    }
+  } else if(type===0xC0){ // Program Change (optional: set common presets)
+    if(d1===0){ // 888000000
+      drawbarNotches = [8,8,8,0,0,0,0,0,0]; buildDrawbars();
+    } else if(d1===1){ // 888800000
+      drawbarNotches = [8,8,8,8,0,0,0,0,0]; buildDrawbars();
+    } else if(d1===2){ // 888000008
+      drawbarNotches = [8,8,8,0,0,0,0,0,8]; buildDrawbars();
+    }
+  }
+}
+
+async function setupMIDI(){
+  if(!('requestMIDIAccess' in navigator)){
+    log('WebMIDI not supported. Use Chrome/Edge over localhost/https.');
+    return;
+  }
+  try{
+    midi = await navigator.requestMIDIAccess({sysex:false});
+  }catch(e){
+    log('MIDI access denied by browser.');
+    return;
+  }
+  function refreshInputs(){
+    midiInSel.innerHTML='';
+    for(const input of midi.inputs.values()){
+      const opt = document.createElement('option');
+      opt.value = input.id; opt.textContent = input.name;
+      midiInSel.appendChild(opt);
+    }
+    if (!midi.inputs.size){
+      const opt = document.createElement('option');
+      opt.textContent = 'No MIDI inputs found'; opt.value='';
+      midiInSel.appendChild(opt);
+    }
+  }
+  refreshInputs();
+  midi.onstatechange = refreshInputs;
+  midiInSel.addEventListener('change', ()=>{
+    if(currentInput){ currentInput.onmidimessage = null; }
+    const id = midiInSel.value;
+    currentInput = [...midi.inputs.values()].find(i=> i.id===id);
+    if(currentInput){
+      currentInput.onmidimessage = handleMIDIMessage;
+      log('MIDI input:', currentInput.name);
+    }
+  });
+  // Auto-select first input if present
+  if(midi.inputs.size){
+    const first = midi.inputs.values().next().value;
+    midiInSel.value = first.id; currentInput = first; currentInput.onmidimessage = handleMIDIMessage;
+    log('MIDI input:', currentInput.name);
+  }
+}
+
+setupMIDI();
+
+// ======= KEYBOARD FOR TESTING (optional) =======
+window.addEventListener('keydown', (e)=>{
+  if(e.repeat) return;
+  const map = {'a':60,'w':61,'s':62,'e':63,'d':64,'f':65,'t':66,'g':67,'y':68,'h':69,'u':70,'j':71,'k':72};
+  if(map[e.key]) startNote(map[e.key], 100);
+  if(e.key===' ') { // space toggles leslie
+    e.preventDefault();
+    if(!started) return;
+    const f = (typeof hornLFO!=='undefined' && hornLFO) ? hornLFO.frequency.value : 0.8;
+    setLeslie(f>1 ? 'chorale' : 'tremolo');
+  }
+});
+window.addEventListener('keyup', (e)=>{
+  const map = {'a':60,'w':61,'s':62,'e':63,'d':64,'f':65,'t':66,'g':67,'y':68,'h':69,'u':70,'j':71,'k':72};
+  if(map[e.key]) stopNote(map[e.key]);
+});
+</script>
+</body>
+</html>
