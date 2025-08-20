@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Hammond-style Organ — Vertical Drawbars + On-screen Keyboard</title>
+<title>Hammond-style Organ — v5 (Vertical Drawbars, Leslie, Key Click, On-screen Keyboard)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root { --bg:#0b0e11; --panel:#12171d; --accent:#3aa675; --text:#e8eef5; --muted:#9db0c3; --slot:#0e151b; }
@@ -28,22 +28,21 @@
        padding:10px 8px; border-radius:10px; border:1px solid #1b2430; }
   .db label{font-size:11px; color:#cfe2f3; text-align:center; min-height:2.2em}
   .slot{ width:44px; height:230px; border-radius:12px; background:var(--slot); border:1px solid #24303a;
-         display:grid; place-items:center; position:relative; overflow:visible }
-  /* The actual slider is horizontal, rotated vertically for robust cross-browser behavior */
-  .vslider{ -webkit-appearance:none; appearance:none; width:230px; height:40px; transform:rotate(-90deg); }
+         position:relative; overflow:hidden }
+  /* The slider is rotated and absolutely centered inside the slot */
+  .vslider{ -webkit-appearance:none; appearance:none; position:absolute; top:50%; left:50%;
+            width:230px; height:40px; transform:translate(-50%,-50%) rotate(-90deg); }
   .vslider::-webkit-slider-runnable-track{ height:8px; background:#0b141a; border-radius:8px; border:1px solid #23313d; }
   .vslider::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:20px; height:20px; border-radius:6px;
                                   background:#3aa675; border:1px solid #2b7e59; margin-top:-6px; }
   .vslider::-moz-range-track{ height:8px; background:#0b141a; border-radius:8px; border:1px solid #23313d; }
   .vslider::-moz-range-thumb{ width:20px; height:20px; border-radius:6px; background:#3aa675; border:1px solid #2b7e59; }
   /* Color caps (Hammond: brown, white, black) */
-  .cap{ position:absolute; top:-10px; left:50%; transform:translateX(-50%); width:38px; height:24px;
+  .cap{ position:absolute; top:6px; left:50%; transform:translateX(-50%); width:38px; height:24px;
         border-radius:6px; display:grid; place-items:center; font-weight:800; font-size:12px; border:1px solid #1b2430; }
   .cap.white{ background:#e9eef4; color:#101418; border-color:#cdd7e3; }
   .cap.black{ background:#0b0e12; color:#e8eef5; border-color:#212a34; }
   .cap.brown{ background:#7b4a1f; color:#f4e9da; border-color:#5f3917; }
-  .value{font-size:13px; width:42px; height:24px; display:grid; place-items:center; background:#12202a;
-         border:1px solid #243340; border-radius:6px; color:#a8f0cd; font-weight:700}
 
   /* On-screen keyboard (robust) */
   .piano-wrap { padding:12px; background:#0f151b; border:1px solid #1b2430; border-radius:10px; overflow:hidden }
@@ -69,7 +68,7 @@
 </header>
 
 <div id="topbar">
-  <button id="startBtn" class="primary">Start Audio</button>
+  <button id="startBtn" class="primary" title="Browsers require a click to start audio. Click this once, then play.">Start Audio</button>
   <div class="group">
     <label>MIDI In</label>
     <select id="midiIn"></select>
@@ -86,6 +85,7 @@
 <div class="panel">
   <div class="section-title">Drawbars</div>
   <div id="drawbars"></div>
+
   <div class="section-title" style="margin-top:12px">Vibrato/Chorus & Performance</div>
   <div class="flex">
     <div>
@@ -105,7 +105,7 @@
     </div>
     <div>
       <label>Key Click</label>
-      <input id="click" type="range" min="0" max="1" step="0.001" value="0.25">
+      <input id="click" type="range" min="0" max="1" step="0.001" value="0.35">
     </div>
     <div>
       <label>Percussion</label>
@@ -139,12 +139,15 @@ const midiToFreq = n => 440 * Math.pow(2, (n - 69) / 12);
 /* Drawbar labels + color caps (Hammond B-3 style) */
 const DB_LABELS = ["16'","5⅓'","8'","4'","2⅔'","2'","1⅗'","1⅓'","1'"];
 const DB_RATIOS = [0.5,1.5,1,2,3,4,5,6,8];
-const DB_CAP = ["brown","brown","white","white","black","white","black","black","white"]; // cap colors in order
+const DB_CAP = ["brown","brown","white","white","black","white","black","black","white"]; // cap colors
 let drawbarNotches = [8,8,8,0,0,0,0,0,0]; // 0..8
 
 /* ===== Audio graph ===== */
-let ctx, master, organBus, preDrive, drive, vibLFO, vibGainCents, chorusDelayA, chorusDelayB, chorusLFOA, chorusLFOB, chorusMixA, chorusMixB;
-let hornLFO, drumLFO, hornPan, drumPan, hornDelay, drumDelay, hornAM, drumAM, splitLP, splitHP;
+let ctx, master, organBus, preDrive, drive, vibLFO, vibGainCents,
+    chorusDelayA, chorusDelayB, chorusLFOA, chorusLFOB, chorusMixA, chorusMixB,
+    hornLFO, drumLFO, hornPan, drumPan, hornDelay, drumDelay, hornAM, drumAM,
+    splitLP, splitHP;
+
 let started = false, heldCount = 0;
 const activeNotes = new Map();
 
@@ -170,7 +173,7 @@ function setupAudio(){
   splitHP=ctx.createBiquadFilter(); splitHP.type='highpass'; splitHP.frequency.value=800;
   const tee=ctx.createGain(); drive.connect(tee); tee.connect(splitLP); tee.connect(splitHP);
 
-  /* Leslie-ish modulation */
+  /* Leslie-ish modulation (audible) */
   drumDelay=ctx.createDelay(0.02); drumDelay.delayTime.value=0.001;
   hornDelay=ctx.createDelay(0.02); hornDelay.delayTime.value=0.001;
   drumAM=ctx.createGain(); hornAM=ctx.createGain(); drumAM.gain.value=1; hornAM.gain.value=1;
@@ -179,25 +182,28 @@ function setupAudio(){
   splitLP.connect(drumDelay).connect(drumAM).connect(drumPan).connect(master);
   splitHP.connect(hornDelay).connect(hornAM).connect(hornPan).connect(master);
 
-  hornLFO=ctx.createOscillator(); hornLFO.frequency.value=0.8;
+  hornLFO=ctx.createOscillator(); hornLFO.frequency.value=0.8; // chorale
   drumLFO=ctx.createOscillator(); drumLFO.frequency.value=0.6;
   const lfoScaleHorn=ctx.createGain(); lfoScaleHorn.gain.value=1;
   const lfoScaleDrum=ctx.createGain(); lfoScaleDrum.gain.value=1;
   hornLFO.connect(lfoScaleHorn); drumLFO.connect(lfoScaleDrum);
   lfoScaleHorn.connect(hornPan.pan); lfoScaleDrum.connect(drumPan.pan);
 
-  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0012;
-  const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.0008;
+  /* Doppler-ish: mod small delay & amplitude for both bands */
+  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0016;
+  const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.0010;
   lfoScaleHorn.connect(hornDelayScale).connect(hornDelay.delayTime);
   lfoScaleDrum.connect(drumDelayScale).connect(drumDelay.delayTime);
 
-  const hornBase=ctx.createConstantSource(); hornBase.offset.value=0.8; hornBase.start();
-  const drumBase=ctx.createConstantSource(); drumBase.offset.value=0.9; drumBase.start();
-  const hornDepth=ctx.createGain(); hornDepth.gain.value=0.2;
-  const drumDepth=ctx.createGain(); drumDepth.gain.value=0.1;
+  const hornBase=ctx.createConstantSource(); hornBase.offset.value=0.85; hornBase.start();
+  const drumBase=ctx.createConstantSource(); drumBase.offset.value=0.95; drumBase.start();
+  const hornDepth=ctx.createGain(); hornDepth.gain.value=0.22;
+  const drumDepth=ctx.createGain(); drumDepth.gain.value=0.12;
   lfoScaleHorn.connect(hornDepth).connect(hornAM.gain);
   lfoScaleDrum.connect(drumDepth).connect(drumAM.gain);
   hornBase.connect(hornAM.gain); drumBase.connect(drumAM.gain);
+
+  hornLFO.start(); drumLFO.start();
 
   /* vibrato/chorus */
   vibLFO=ctx.createOscillator(); vibLFO.type='sine'; vibLFO.frequency.value=6; vibLFO.start();
@@ -216,9 +222,10 @@ function setupAudio(){
   drive.connect(chorusDelayA).connect(chorusMixA).connect(master);
   drive.connect(chorusDelayB).connect(chorusMixB).connect(master);
 
-  started=true;
+  started = true;
 }
 
+/* real-time params */
 function setDrive(a){ if(drive) drive.curve=makeDriveCurve(a); }
 function setVibratoMode(mode){
   let det=0, chor=0;
@@ -231,15 +238,17 @@ function setVibratoMode(mode){
   if(chorusMixA){ chorusMixA.gain.setTargetAtTime(chor, ctx.currentTime, 0.1); chorusMixB.gain.setTargetAtTime(chor, ctx.currentTime, 0.1); }
 }
 function setLeslie(mode){
-  const now=ctx?ctx.currentTime:0;
-  const setF=(osc,v,t)=>osc&&osc.frequency.setTargetAtTime(v, now, t);
-  if(!hornLFO||!drumLFO) return;
+  if(!ctx) return;
+  const now=ctx.currentTime;
+  const setF=(osc, f, tau)=>osc.frequency.setTargetAtTime(f, now, tau);
+
   if(mode==='stop'){ setF(hornLFO,0.01,0.8); setF(drumLFO,0.01,2.0); }
   else if(mode==='chorale'){ setF(hornLFO,0.8,0.8); setF(drumLFO,0.6,2.0); }
   else if(mode==='tremolo'){ setF(hornLFO,6.5,0.8); setF(drumLFO,4.5,2.0); }
   else if(mode==='brake'){ setF(hornLFO,0.0001,0.3); setF(drumLFO,0.0001,0.6); }
 }
 
+/* ===== Synth voice ===== */
 function startNote(note, velocity=100){
   if(!started) return;
   if(activeNotes.has(note)) return;
@@ -249,6 +258,7 @@ function startNote(note, velocity=100){
   gate.gain.setValueAtTime(0, ctx.currentTime);
   gate.gain.linearRampToValueAtTime(1, ctx.currentTime+0.004);
 
+  /* 9-harmonic tonewheel stack */
   const oscs=[], vibLinks=[];
   for(let i=0;i<9;i++){
     const o=ctx.createOscillator(); o.type='sine'; o.frequency.value=freq*DB_RATIOS[i];
@@ -258,15 +268,24 @@ function startNote(note, velocity=100){
     oscs.push({osc:o,gain:g});
   }
 
-  const clickLevel=parseFloat(document.getElementById('click').value);
-  if(clickLevel>0){
+  /* Key click (noise burst shaped by short envelope) */
+  const clickLevel=parseFloat(document.getElementById('click').value); // 0..1
+  if(clickLevel>0.0001){
     const click=ctx.createBufferSource();
-    const buf=ctx.createBuffer(1, Math.floor(ctx.sampleRate*0.02), ctx.sampleRate);
+    const dur=0.012; // 12ms
+    const buf=ctx.createBuffer(1, Math.floor(ctx.sampleRate*dur), ctx.sampleRate);
     const ch=buf.getChannelData(0);
-    for(let i=0;i<ch.length;i++){ ch[i]=(Math.random()*2-1)*Math.exp(-i/(ctx.sampleRate*0.003)); }
-    click.buffer=buf; const cg=ctx.createGain(); cg.gain.value=clickLevel*0.4; click.connect(cg).connect(gate); click.start();
+    for(let i=0;i<ch.length;i++){
+      ch[i]=(Math.random()*2-1) * Math.exp(-i/(ctx.sampleRate*0.002)); // very fast decay
+    }
+    click.buffer=buf;
+    const cg=ctx.createGain();
+    cg.gain.value = clickLevel * 0.8; // make it clearly audible
+    click.connect(cg).connect(gate);
+    click.start();
   }
 
+  /* Percussion (single-trigger) */
   const percOn=document.getElementById('percOn').checked;
   if(percOn && heldCount===0){
     const which=document.getElementById('percHarm').value;
@@ -274,8 +293,8 @@ function startNote(note, velocity=100){
     const soft=document.getElementById('percVol').value==='soft';
     const p=ctx.createOscillator(); p.type='sine';
     const ratio=(which==='2')?2.0:3.0; p.frequency.value=freq*ratio;
-    const pg=ctx.createGain(); pg.gain.setValueAtTime(soft?0.25:0.4, ctx.currentTime);
-    pg.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime+(fast?0.25:0.65));
+    const pg=ctx.createGain(); pg.gain.setValueAtTime(soft?0.22:0.38, ctx.currentTime);
+    pg.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime+(fast?0.22:0.65));
     p.connect(pg).connect(gate); p.start(); p.stop(ctx.currentTime+1);
   }
 
@@ -299,7 +318,7 @@ function stopNote(note){
   heldCount=Math.max(0, heldCount-1);
 }
 
-/* ===== Build vertical drawbars with caps ===== */
+/* ===== Build vertical drawbars with caps (single set; no duplicates) ===== */
 const drawbarsEl=document.getElementById('drawbars');
 function buildDrawbars(){
   drawbarsEl.innerHTML='';
@@ -310,7 +329,7 @@ function buildDrawbars(){
     const slot=document.createElement('div'); slot.className='slot';
 
     const cap=document.createElement('div'); cap.className='cap ' + DB_CAP[i];
-    cap.textContent = drawbarNotches[i]; // big number on cap (0..8)
+    cap.textContent = drawbarNotches[i]; // big 0..8 number
     slot.appendChild(cap);
 
     const s=document.createElement('input'); s.className='vslider'; s.type='range'; s.min=0; s.max=8; s.step=1;
@@ -326,14 +345,6 @@ function buildDrawbars(){
     slot.appendChild(s);
     wrap.appendChild(slot);
 
-    const val=document.createElement('div'); val.className='value'; val.textContent=drawbarNotches[i];
-    // keep a small numeric readout below too (optional)
-    wrap.appendChild(val);
-
-    // keep val in sync with cap
-    const obs = new MutationObserver(()=> val.textContent = cap.textContent);
-    obs.observe(cap,{childList:true,subtree:true,characterData:true});
-
     drawbarsEl.appendChild(wrap);
   });
 }
@@ -344,7 +355,7 @@ document.getElementById('startBtn').addEventListener('click', async()=>{
   setupAudio(); await ctx.resume();
   setDrive(parseFloat(document.getElementById('drive').value));
   setVibratoMode(document.getElementById('vibMode').value);
-  setLeslie('chorale');
+  setLeslie('chorale'); // default slow
   log('Audio started.');
 });
 document.getElementById('drive').addEventListener('input', e=>{ if(!started) return; setDrive(parseFloat(e.target.value)); });
@@ -362,11 +373,9 @@ function handleMIDIMessage(e){
     const cc=d1,val=d2;
     if(cc>=20 && cc<=28){
       const idx=cc-20; const notch=Math.round((val/127)*8); drawbarNotches[idx]=notch;
-      // update cap & slider (remember slider is inverted)
       const wrap = drawbarsEl.children[idx];
       wrap.querySelector('.cap').textContent = notch;
       wrap.querySelector('.vslider').value = 8 - notch;
-      wrap.querySelector('.value').textContent = notch;
       if(started){ activeNotes.forEach(n=> n.oscs[idx].gain.gain.setTargetAtTime(notch/8, ctx.currentTime, 0.01)); }
     } else if(cc===11){
       const v=val/127; document.getElementById('expr').value=v;
