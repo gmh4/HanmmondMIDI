@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Hammond-style Organ — v5 (Vertical Drawbars, Leslie, Key Click, On-screen Keyboard)</title>
+<title>Hammond-style Organ — v6 (mellower Leslie, numbered drawbars)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root { --bg:#0b0e11; --panel:#12171d; --accent:#3aa675; --text:#e8eef5; --muted:#9db0c3; --slot:#0e151b; }
@@ -22,14 +22,18 @@
   .flex{display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start}
   .section-title{font-weight:700; font-size:14px; margin-bottom:8px; letter-spacing:.5px; color:#cfe2f3}
 
-  /* === VERTICAL DRAWBARS with COLORED CAPS === */
+  /* === VERTICAL DRAWBARS with COLORED CAPS + SCALE MARKERS === */
   #drawbars{display:flex; gap:14px; align-items:flex-end; justify-content:center; flex-wrap:wrap}
-  .db{ width:56px; display:flex; flex-direction:column; align-items:center; gap:8px; background:#0f151b;
+  .db{ width:62px; display:flex; flex-direction:column; align-items:center; gap:8px; background:#0f151b;
        padding:10px 8px; border-radius:10px; border:1px solid #1b2430; }
   .db label{font-size:11px; color:#cfe2f3; text-align:center; min-height:2.2em}
-  .slot{ width:44px; height:230px; border-radius:12px; background:var(--slot); border:1px solid #24303a;
+  .slot{ width:48px; height:230px; border-radius:12px; background:var(--slot); border:1px solid #24303a;
          position:relative; overflow:hidden }
-  /* The slider is rotated and absolutely centered inside the slot */
+  /* tick labels 8..1 on left side of rail */
+  .ticks{ position:absolute; left:4px; top:8px; bottom:8px; width:12px;
+          display:flex; flex-direction:column; justify-content:space-between; align-items:center; pointer-events:none; }
+  .ticks span{ font-size:9px; color:#6e8499; line-height:1; }
+  /* slider centered and rotated */
   .vslider{ -webkit-appearance:none; appearance:none; position:absolute; top:50%; left:50%;
             width:230px; height:40px; transform:translate(-50%,-50%) rotate(-90deg); }
   .vslider::-webkit-slider-runnable-track{ height:8px; background:#0b141a; border-radius:8px; border:1px solid #23313d; }
@@ -37,8 +41,8 @@
                                   background:#3aa675; border:1px solid #2b7e59; margin-top:-6px; }
   .vslider::-moz-range-track{ height:8px; background:#0b141a; border-radius:8px; border:1px solid #23313d; }
   .vslider::-moz-range-thumb{ width:20px; height:20px; border-radius:6px; background:#3aa675; border:1px solid #2b7e59; }
-  /* Color caps (Hammond: brown, white, black) */
-  .cap{ position:absolute; top:6px; left:50%; transform:translateX(-50%); width:38px; height:24px;
+  /* Color caps */
+  .cap{ position:absolute; top:6px; left:50%; transform:translateX(-50%); width:42px; height:24px;
         border-radius:6px; display:grid; place-items:center; font-weight:800; font-size:12px; border:1px solid #1b2430; }
   .cap.white{ background:#e9eef4; color:#101418; border-color:#cdd7e3; }
   .cap.black{ background:#0b0e12; color:#e8eef5; border-color:#212a34; }
@@ -64,7 +68,7 @@
 <body>
 <header>
   <h1>Hammond-style Organ</h1>
-  <p>Vertical drawbars with colored caps • key click • percussion • vibrato/chorus • Leslie • MIDI + on-screen keyboard</p>
+  <p>Vertical drawbars with colored caps + 1–8 scale • mellower Leslie • key click • percussion • vibrato/chorus • MIDI + on-screen keyboard</p>
 </header>
 
 <div id="topbar">
@@ -173,7 +177,7 @@ function setupAudio(){
   splitHP=ctx.createBiquadFilter(); splitHP.type='highpass'; splitHP.frequency.value=800;
   const tee=ctx.createGain(); drive.connect(tee); tee.connect(splitLP); tee.connect(splitHP);
 
-  /* Leslie-ish modulation (audible) */
+  /* Leslie-ish modulation (mellow Doppler) */
   drumDelay=ctx.createDelay(0.02); drumDelay.delayTime.value=0.001;
   hornDelay=ctx.createDelay(0.02); hornDelay.delayTime.value=0.001;
   drumAM=ctx.createGain(); hornAM=ctx.createGain(); drumAM.gain.value=1; hornAM.gain.value=1;
@@ -182,16 +186,16 @@ function setupAudio(){
   splitLP.connect(drumDelay).connect(drumAM).connect(drumPan).connect(master);
   splitHP.connect(hornDelay).connect(hornAM).connect(hornPan).connect(master);
 
-  hornLFO=ctx.createOscillator(); hornLFO.frequency.value=0.8; // chorale
+  hornLFO=ctx.createOscillator(); hornLFO.frequency.value=0.8; // chorale default
   drumLFO=ctx.createOscillator(); drumLFO.frequency.value=0.6;
   const lfoScaleHorn=ctx.createGain(); lfoScaleHorn.gain.value=1;
   const lfoScaleDrum=ctx.createGain(); lfoScaleDrum.gain.value=1;
   hornLFO.connect(lfoScaleHorn); drumLFO.connect(lfoScaleDrum);
   lfoScaleHorn.connect(hornPan.pan); lfoScaleDrum.connect(drumPan.pan);
 
-  /* Doppler-ish: mod small delay & amplitude for both bands */
-  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0016;
-  const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.0010;
+  /* MELLOWED Doppler depth (reduced from v5) */
+  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0008; // was 0.0016
+  const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.0005; // was 0.0010
   lfoScaleHorn.connect(hornDelayScale).connect(hornDelay.delayTime);
   lfoScaleDrum.connect(drumDelayScale).connect(drumDelay.delayTime);
 
@@ -268,19 +272,16 @@ function startNote(note, velocity=100){
     oscs.push({osc:o,gain:g});
   }
 
-  /* Key click (noise burst shaped by short envelope) */
-  const clickLevel=parseFloat(document.getElementById('click').value); // 0..1
+  /* Key click (short noise burst) */
+  const clickLevel=parseFloat(document.getElementById('click').value);
   if(clickLevel>0.0001){
     const click=ctx.createBufferSource();
-    const dur=0.012; // 12ms
+    const dur=0.012;
     const buf=ctx.createBuffer(1, Math.floor(ctx.sampleRate*dur), ctx.sampleRate);
     const ch=buf.getChannelData(0);
-    for(let i=0;i<ch.length;i++){
-      ch[i]=(Math.random()*2-1) * Math.exp(-i/(ctx.sampleRate*0.002)); // very fast decay
-    }
+    for(let i=0;i<ch.length;i++){ ch[i]=(Math.random()*2-1)*Math.exp(-i/(ctx.sampleRate*0.002)); }
     click.buffer=buf;
-    const cg=ctx.createGain();
-    cg.gain.value = clickLevel * 0.8; // make it clearly audible
+    const cg=ctx.createGain(); cg.gain.value = clickLevel * 0.8;
     click.connect(cg).connect(gate);
     click.start();
   }
@@ -318,7 +319,7 @@ function stopNote(note){
   heldCount=Math.max(0, heldCount-1);
 }
 
-/* ===== Build vertical drawbars with caps (single set; no duplicates) ===== */
+/* ===== Build vertical drawbars with caps + 1–8 scale ===== */
 const drawbarsEl=document.getElementById('drawbars');
 function buildDrawbars(){
   drawbarsEl.innerHTML='';
@@ -328,8 +329,13 @@ function buildDrawbars(){
 
     const slot=document.createElement('div'); slot.className='slot';
 
+    /* scale 8..1 labels */
+    const ticks=document.createElement('div'); ticks.className='ticks';
+    for(let n=8;n>=1;n--){ const sp=document.createElement('span'); sp.textContent=n; ticks.appendChild(sp); }
+    slot.appendChild(ticks);
+
     const cap=document.createElement('div'); cap.className='cap ' + DB_CAP[i];
-    cap.textContent = drawbarNotches[i]; // big 0..8 number
+    cap.textContent = drawbarNotches[i]; // live 0..8
     slot.appendChild(cap);
 
     const s=document.createElement('input'); s.className='vslider'; s.type='range'; s.min=0; s.max=8; s.step=1;
