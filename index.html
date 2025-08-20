@@ -194,8 +194,8 @@ function setupAudio(){
   lfoScaleHorn.connect(hornPan.pan); lfoScaleDrum.connect(drumPan.pan);
 
   /* MELLOWED Doppler depth (reduced from v5) */
-  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0008; // was 0.0016
-  const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.0005; // was 0.0010
+  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0004; // was 0.0016
+  const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.00025; // was 0.0010
   lfoScaleHorn.connect(hornDelayScale).connect(hornDelay.delayTime);
   lfoScaleDrum.connect(drumDelayScale).connect(drumDelay.delayTime);
 
@@ -469,3 +469,4 @@ setupMIDI();
 </script>
 </body>
 </html>
+
