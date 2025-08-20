@@ -2,16 +2,17 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Hammond-style Organ — v6 (mellower Leslie, numbered drawbars)</title>
+<title>Hammond-style Organ — v8 (mellower Leslie, numbered drawbars, on-screen sustain)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root { --bg:#0b0e11; --panel:#12171d; --accent:#3aa675; --text:#e8eef5; --muted:#9db0c3; --slot:#0e151b; }
   html,body{height:100%}
   body{ margin:0; background:linear-gradient(180deg,#0b0e11,#0e1319); color:var(--text);
         font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial; display:flex; flex-direction:column; align-items:center; }
-  header{padding:16px 20px; text-align:center}
+  header{padding:16px 20px; text-align:center; position:relative}
   header h1{margin:0; font-size:20px; letter-spacing:.6px}
-  header p{margin:6px 0 0; color:var(--muted); font-size:13px}
+  header p{margin:6px 0 0; color:#9db0c3; font-size:13px}
+  .badge{position:absolute; right:16px; top:16px; font-size:12px; background:#1b2430; color:#a8f0cd; padding:4px 8px; border-radius:8px; border:1px solid #243340}
 
   #topbar{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:center; padding:10px 12px;
            background:var(--panel); border:1px solid #1f2832; border-radius:10px; margin:10px; }
@@ -22,18 +23,16 @@
   .flex{display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start}
   .section-title{font-weight:700; font-size:14px; margin-bottom:8px; letter-spacing:.5px; color:#cfe2f3}
 
-  /* === VERTICAL DRAWBARS with COLORED CAPS + SCALE MARKERS === */
+  /* Drawbars with colored caps + scale markers */
   #drawbars{display:flex; gap:14px; align-items:flex-end; justify-content:center; flex-wrap:wrap}
   .db{ width:62px; display:flex; flex-direction:column; align-items:center; gap:8px; background:#0f151b;
        padding:10px 8px; border-radius:10px; border:1px solid #1b2430; }
   .db label{font-size:11px; color:#cfe2f3; text-align:center; min-height:2.2em}
   .slot{ width:48px; height:230px; border-radius:12px; background:var(--slot); border:1px solid #24303a;
          position:relative; overflow:hidden }
-  /* tick labels 8..1 on left side of rail */
   .ticks{ position:absolute; left:4px; top:8px; bottom:8px; width:12px;
           display:flex; flex-direction:column; justify-content:space-between; align-items:center; pointer-events:none; }
   .ticks span{ font-size:9px; color:#6e8499; line-height:1; }
-  /* slider centered and rotated */
   .vslider{ -webkit-appearance:none; appearance:none; position:absolute; top:50%; left:50%;
             width:230px; height:40px; transform:translate(-50%,-50%) rotate(-90deg); }
   .vslider::-webkit-slider-runnable-track{ height:8px; background:#0b141a; border-radius:8px; border:1px solid #23313d; }
@@ -41,14 +40,14 @@
                                   background:#3aa675; border:1px solid #2b7e59; margin-top:-6px; }
   .vslider::-moz-range-track{ height:8px; background:#0b141a; border-radius:8px; border:1px solid #23313d; }
   .vslider::-moz-range-thumb{ width:20px; height:20px; border-radius:6px; background:#3aa675; border:1px solid #2b7e59; }
-  /* Color caps */
   .cap{ position:absolute; top:6px; left:50%; transform:translateX(-50%); width:42px; height:24px;
         border-radius:6px; display:grid; place-items:center; font-weight:800; font-size:12px; border:1px solid #1b2430; }
   .cap.white{ background:#e9eef4; color:#101418; border-color:#cdd7e3; }
   .cap.black{ background:#0b0e12; color:#e8eef5; border-color:#212a34; }
   .cap.brown{ background:#7b4a1f; color:#f4e9da; border-color:#5f3917; }
 
-  /* On-screen keyboard (robust) */
+  /* On-screen keyboard */
+  .piano-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
   .piano-wrap { padding:12px; background:#0f151b; border:1px solid #1b2430; border-radius:10px; overflow:hidden }
   .piano { position:relative; user-select:none; height:180px; display:block; margin:auto; }
   .key { box-sizing:border-box; cursor:pointer; }
@@ -68,7 +67,8 @@
 <body>
 <header>
   <h1>Hammond-style Organ</h1>
-  <p>Vertical drawbars with colored caps + 1–8 scale • mellower Leslie • key click • percussion • vibrato/chorus • MIDI + on-screen keyboard</p>
+  <p>Vertical drawbars (colored caps + 1–8 scale) • mellower Leslie • key click • percussion • V/C • MIDI + on-screen keyboard</p>
+  <div class="badge">v8</div>
 </header>
 
 <div id="topbar">
@@ -124,14 +124,17 @@
 <div class="panel">
   <div class="section-title">On-screen Keyboard</div>
   <div class="piano-wrap">
+    <div class="piano-top">
+      <div class="piano-label">Click/tap keys to play (C3–C5).</div>
+      <button id="sustainBtn" aria-pressed="false" title="Hold released on-screen keys until toggled off">Sustain: OFF</button>
+    </div>
     <div id="piano" class="piano" aria-label="On-screen keyboard"></div>
-    <div class="piano-label">Click/tap keys to play (C3–C5). Works without a MIDI controller.</div>
   </div>
 </div>
 
 <div class="panel">
   <div class="section-title">MIDI + Log</div>
-  <div class="minor">Notes on any channel. CC20–28 drawbars, CC11 expression, CC64 Leslie slow/fast, CC1 vibrato mode.</div>
+  <div class="minor">Notes on any channel. CC20–28 drawbars, CC11 expression, CC64 = Leslie slow/fast, CC1 = V/C mode.</div>
   <div id="log" style="margin-top:10px"></div>
 </div>
 
@@ -193,9 +196,9 @@ function setupAudio(){
   hornLFO.connect(lfoScaleHorn); drumLFO.connect(lfoScaleDrum);
   lfoScaleHorn.connect(hornPan.pan); lfoScaleDrum.connect(drumPan.pan);
 
-  /* MELLOWED Doppler depth (reduced from v5) */
-  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0004; // was 0.0016
-  const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.00025; // was 0.0010
+  /* Doppler depth (mellow) */
+  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0004; // v7/v8 mellow
+  const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.00025;
   lfoScaleHorn.connect(hornDelayScale).connect(hornDelay.delayTime);
   lfoScaleDrum.connect(drumDelayScale).connect(drumDelay.delayTime);
 
@@ -245,7 +248,6 @@ function setLeslie(mode){
   if(!ctx) return;
   const now=ctx.currentTime;
   const setF=(osc, f, tau)=>osc.frequency.setTargetAtTime(f, now, tau);
-
   if(mode==='stop'){ setF(hornLFO,0.01,0.8); setF(drumLFO,0.01,2.0); }
   else if(mode==='chorale'){ setF(hornLFO,0.8,0.8); setF(drumLFO,0.6,2.0); }
   else if(mode==='tremolo'){ setF(hornLFO,6.5,0.8); setF(drumLFO,4.5,2.0); }
@@ -319,7 +321,7 @@ function stopNote(note){
   heldCount=Math.max(0, heldCount-1);
 }
 
-/* ===== Build vertical drawbars with caps + 1–8 scale ===== */
+/* ===== Build vertical drawbars ===== */
 const drawbarsEl=document.getElementById('drawbars');
 function buildDrawbars(){
   drawbarsEl.innerHTML='';
@@ -362,14 +364,14 @@ document.getElementById('startBtn').addEventListener('click', async()=>{
   setDrive(parseFloat(document.getElementById('drive').value));
   setVibratoMode(document.getElementById('vibMode').value);
   setLeslie('chorale'); // default slow
-  log('Audio started.');
+  log('Audio started. (v8)');
 });
 document.getElementById('drive').addEventListener('input', e=>{ if(!started) return; setDrive(parseFloat(e.target.value)); });
 document.getElementById('expr').addEventListener('input', e=>{ if(!started) return; const v=parseFloat(e.target.value); activeNotes.forEach(n=> n.gate.gain.setTargetAtTime(v, ctx.currentTime, 0.03)); });
 document.getElementById('vibMode').addEventListener('change', e=>{ if(!started) return; setVibratoMode(e.target.value); });
 Array.from(document.querySelectorAll('[data-leslie]')).forEach(btn=> btn.addEventListener('click', ()=>{ if(!started) return; setLeslie(btn.getAttribute('data-leslie')); }));
 
-/* ===== MIDI ===== */
+/* ===== MIDI (unchanged: CC64 is used for Leslie, not sustain) ===== */
 let midi, midiInSel=document.getElementById('midiIn'), currentInput;
 function handleMIDIMessage(e){
   const [st,d1,d2]=e.data; const type=st & 0xF0;
@@ -425,18 +427,22 @@ async function setupMIDI(){
 }
 setupMIDI();
 
-/* ===== On-screen keyboard (C3..C5) ===== */
+/* ===== On-screen keyboard (C3..C5) with SUSTAIN ===== */
 (function(){
   const piano=document.getElementById('piano'); if(!piano) return;
   const WHITE_W=32, BLACK_W=20, BLACK_H=112; const START=48, END=72;
   const isBlack=n=>[1,3,6,8,10].includes(n%12); const isWhite=n=>!isBlack(n);
   const whiteX=new Map(); let whites=0;
+
+  // Build white keys
   for(let n=START;n<=END;n++){
     if(isWhite(n)){ const x=whites*WHITE_W; whiteX.set(n,x);
       const el=document.createElement('div'); el.className='key white'; el.dataset.note=String(n); piano.appendChild(el); whites++;
     }
   }
   piano.style.width=(whites*WHITE_W)+'px';
+
+  // Place black keys
   const leftWhiteForBlack=(n)=>{ const pc=n%12; const leftPc={1:0,3:2,6:5,8:7,10:9}[pc]; if(leftPc===undefined) return null;
     let m=n-1; while(m>=START && (m%12)!==leftPc) m--; return whiteX.has(m)?m:null; };
   for(let n=START;n<=END;n++){
@@ -446,27 +452,71 @@ setupMIDI();
       el.style.left=left+'px'; el.style.height=BLACK_H+'px'; piano.appendChild(el);
     }
   }
-  const press=async (el)=>{ if(!el) return; const note=parseInt(el.dataset.note,10); el.classList.add('active');
+
+  // Sustain state (on-screen only)
+  let sustainOn = false;
+  const onscreenDown = new Set();   // notes currently held by mouse/touch
+  const sustained = new Set();      // notes released while sustain is ON
+
+  const sustainBtn = document.getElementById('sustainBtn');
+  sustainBtn.addEventListener('click', ()=>{
+    sustainOn = !sustainOn;
+    sustainBtn.setAttribute('aria-pressed', String(sustainOn));
+    sustainBtn.textContent = 'Sustain: ' + (sustainOn ? 'ON' : 'OFF');
+    if(!sustainOn){
+      // release all sustained notes that aren't physically held
+      for(const n of Array.from(sustained)){
+        if(!onscreenDown.has(n)) { stopNote(n); sustained.delete(n); }
+      }
+    }
+  });
+
+  const press=async (el)=>{
+    if(!el) return;
+    const note=parseInt(el.dataset.note,10);
+    el.classList.add('active');
+    onscreenDown.add(note);
+    sustained.delete(note); // if it was in sustain bucket, it is now physically held again
     try{ if(typeof setupAudio==='function' && !started) setupAudio(); if(ctx && ctx.state==='suspended') await ctx.resume(); }catch(_){}
     if(typeof startNote==='function') startNote(note,110);
   };
-  const release=(el)=>{ if(!el) return; const note=parseInt(el.dataset.note,10); el.classList.remove('active');
-    if(typeof stopNote==='function') stopNote(note);
+  const release=(el)=>{
+    if(!el) return;
+    const note=parseInt(el.dataset.note,10);
+    el.classList.remove('active');
+    onscreenDown.delete(note);
+    if(sustainOn){
+      sustained.add(note); // keep ringing until sustain is toggled off
+    }else{
+      if(typeof stopNote==='function') stopNote(note);
+      sustained.delete(note);
+    }
   };
+
   let mouseDown=false;
   piano.addEventListener('mousedown',(e)=>{ const k=e.target.closest('.key'); mouseDown=true; if(k) press(k); });
   window.addEventListener('mouseup',()=>{ mouseDown=false; piano.querySelectorAll('.key.active').forEach(release); });
   piano.addEventListener('mouseover',(e)=>{ if(!mouseDown) return; const k=e.target.closest('.key'); if(k && !k.classList.contains('active')) press(k); });
   piano.addEventListener('mouseout',(e)=>{ const k=e.target.closest('.key'); if(mouseDown && k) release(k); });
-  piano.addEventListener('touchstart',(e)=>{ e.preventDefault(); for(const t of e.changedTouches){
+
+  piano.addEventListener('touchstart',(e)=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
       const el=document.elementFromPoint(t.clientX,t.clientY)?.closest('.key'); if(el) press(el);
-    }},{passive:false});
-  piano.addEventListener('touchmove',(e)=>{ e.preventDefault(); piano.querySelectorAll('.key.active').forEach(release);
-    for(const t of e.changedTouches){ const el=document.elementFromPoint(t.clientX,t.clientY)?.closest('.key'); if(el) press(el); }
+    }
   },{passive:false});
-  piano.addEventListener('touchend',(e)=>{ e.preventDefault(); piano.querySelectorAll('.key.active').forEach(release); },{passive:false});
+  piano.addEventListener('touchmove',(e)=>{
+    e.preventDefault();
+    piano.querySelectorAll('.key.active').forEach(release); // end prior touches
+    for(const t of e.changedTouches){
+      const el=document.elementFromPoint(t.clientX,t.clientY)?.closest('.key'); if(el) press(el);
+    }
+  },{passive:false});
+  piano.addEventListener('touchend',(e)=>{
+    e.preventDefault();
+    piano.querySelectorAll('.key.active').forEach(release);
+  },{passive:false});
 })();
 </script>
 </body>
 </html>
-
