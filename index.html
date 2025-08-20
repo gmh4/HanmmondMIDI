@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Hammond-style Organ — v8 (mellower Leslie, numbered drawbars, on-screen sustain)</title>
+<title>Hammond-style Organ — v11 (Gain staged + Limiter)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root { --bg:#0b0e11; --panel:#12171d; --accent:#3aa675; --text:#e8eef5; --muted:#9db0c3; --slot:#0e151b; }
@@ -19,6 +19,7 @@
   button, select, input[type=range]{ background:#18212a; color:var(--text); border:1px solid #25303a; border-radius:8px; padding:8px 10px; font-size:14px; }
   button:hover{background:#1d2833}
   button.primary{background:var(--accent); border-color:#2b7e59; color:#08130e; font-weight:600}
+  button.toggle[aria-pressed="true"]{ background:#2a7e59; border-color:#1d5d44; color:#08130e; font-weight:700 }
   .panel{ background:var(--panel); border:1px solid #1f2832; border-radius:12px; padding:14px; margin:10px; width:min(1100px,96%); }
   .flex{display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start}
   .section-title{font-weight:700; font-size:14px; margin-bottom:8px; letter-spacing:.5px; color:#cfe2f3}
@@ -47,8 +48,8 @@
   .cap.brown{ background:#7b4a1f; color:#f4e9da; border-color:#5f3917; }
 
   /* On-screen keyboard */
-  .piano-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
   .piano-wrap { padding:12px; background:#0f151b; border:1px solid #1b2430; border-radius:10px; overflow:hidden }
+  .piano-controls { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; }
   .piano { position:relative; user-select:none; height:180px; display:block; margin:auto; }
   .key { box-sizing:border-box; cursor:pointer; }
   .key.white { position:relative; display:inline-block; width:32px; height:180px;
@@ -58,8 +59,7 @@
                background:linear-gradient(#0a0e12,#0a0e12 60%,#091016); border:1px solid #1b2430;
                border-radius:0 0 6px 6px; z-index:5; box-shadow:0 2px 6px rgba(0,0,0,0.5); }
   .key.black.active { background:linear-gradient(#2a7e59,#1f5d44); }
-  .piano-label{ color:#9db0c3; font-size:12px; margin-top:6px; text-align:center }
-
+  .piano-label{ color:#9db0c3; font-size:12px; }
   #log{white-space:pre-wrap; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px;
        color:#b5c9da; background:#0c1116; border:1px solid #1b2530; border-radius:8px; padding:10px; max-height:140px; overflow:auto}
 </style>
@@ -67,8 +67,8 @@
 <body>
 <header>
   <h1>Hammond-style Organ</h1>
-  <p>Vertical drawbars (colored caps + 1–8 scale) • mellower Leslie • key click • percussion • V/C • MIDI + on-screen keyboard</p>
-  <div class="badge">v8</div>
+  <p>Gain-staged for headroom • master compressor + limiter • vertical drawbars • Leslie • key click • percussion • V/C • MIDI + on-screen keyboard</p>
+  <div class="badge">v11</div>
 </header>
 
 <div id="topbar">
@@ -101,7 +101,7 @@
     </div>
     <div>
       <label>Expression (CC11)</label>
-      <input id="expr" type="range" min="0" max="1" step="0.001" value="0.2">
+      <input id="expr" type="range" min="0" max="1" step="0.001" value="0.85">
     </div>
     <div>
       <label>Overdrive</label>
@@ -124,9 +124,9 @@
 <div class="panel">
   <div class="section-title">On-screen Keyboard</div>
   <div class="piano-wrap">
-    <div class="piano-top">
-      <div class="piano-label">Click/tap keys to play (C3–C5).</div>
-      <button id="sustainBtn" aria-pressed="false" title="Hold released on-screen keys until toggled off">Sustain: OFF</button>
+    <div class="piano-controls">
+      <div class="piano-label">Click/tap keys to play (C3–C5). Works without a MIDI controller.</div>
+      <button id="sustainBtn" class="toggle" aria-pressed="false" title="Hold released on-screen keys until toggled off">Sustain: OFF</button>
     </div>
     <div id="piano" class="piano" aria-label="On-screen keyboard"></div>
   </div>
@@ -153,25 +153,49 @@ let drawbarNotches = [8,8,8,0,0,0,0,0,0]; // 0..8
 let ctx, master, organBus, preDrive, drive, vibLFO, vibGainCents,
     chorusDelayA, chorusDelayB, chorusLFOA, chorusLFOB, chorusMixA, chorusMixB,
     hornLFO, drumLFO, hornPan, drumPan, hornDelay, drumDelay, hornAM, drumAM,
-    splitLP, splitHP;
+    splitLP, splitHP, comp, limiter;
 
 let started = false, heldCount = 0;
 const activeNotes = new Map();
 
 function makeDriveCurve(amount,n=2048){ const k=amount*3+0.0001; const c=new Float32Array(n);
   for(let i=0;i<n;i++){ const x=(i/(n-1))*2-1; c[i]=Math.atan(k*x)/Math.atan(k);} return c; }
+function makeSoftClipCurve(amount=0.6, n=2048){
+  const c=new Float32Array(n);
+  for(let i=0;i<n;i++){
+    const x=(i/(n-1))*2-1;
+    c[i] = Math.tanh(x* (1+amount*3)) / Math.tanh(1+amount*3);
+  }
+  return c;
+}
 
 function setupAudio(){
   if(started) return;
   ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
 
+  /* === Master + dynamics chain === */
   master=ctx.createGain(); master.gain.value=0.9;
-  const comp=ctx.createDynamicsCompressor();
-  comp.threshold.value=-10; comp.knee.value=8; comp.ratio.value=2; comp.attack.value=0.003; comp.release.value=0.2;
-  master.connect(comp).connect(ctx.destination);
+
+  // Compressor: warms + tames peaks (Fix #3 part 1)
+  comp=ctx.createDynamicsCompressor();
+  comp.threshold.value=-24; // earlier start to compress
+  comp.knee.value=30;
+  comp.ratio.value=6;
+  comp.attack.value=0.003;
+  comp.release.value=0.25;
+
+  // Soft limiter: gentle clip guard (Fix #3 part 2)
+  limiter=ctx.createWaveShaper();
+  limiter.curve = makeSoftClipCurve(0.5); // 0..1 = more limiting
+  limiter.oversample='4x';
+
+  master.connect(comp).connect(limiter).connect(ctx.destination);
 
   organBus=ctx.createGain();
-  preDrive=ctx.createGain(); preDrive.gain.value=1;
+
+  // Slightly reduce pre-drive level for headroom (part of Fix #1)
+  preDrive=ctx.createGain(); preDrive.gain.value=0.7;
+
   drive=ctx.createWaveShaper(); drive.curve=makeDriveCurve(parseFloat(document.getElementById('drive').value)); drive.oversample='4x';
   organBus.connect(preDrive).connect(drive);
 
@@ -181,9 +205,9 @@ function setupAudio(){
   const tee=ctx.createGain(); drive.connect(tee); tee.connect(splitLP); tee.connect(splitHP);
 
   /* Leslie-ish modulation (mellow Doppler) */
-  drumDelay=ctx.createDelay(0.02); drumDelay.delayTime.value=0.001;
-  hornDelay=ctx.createDelay(0.02); hornDelay.delayTime.value=0.001;
-  drumAM=ctx.createGain(); hornAM=ctx.createGain(); drumAM.gain.value=1; hornAM.gain.value=1;
+  const drumDelay=ctx.createDelay(0.02); drumDelay.delayTime.value=0.001;
+  const hornDelay=ctx.createDelay(0.02); hornDelay.delayTime.value=0.001;
+  const drumAM=ctx.createGain(); const hornAM=ctx.createGain(); drumAM.gain.value=1; hornAM.gain.value=1;
   drumPan=ctx.createStereoPanner(); hornPan=ctx.createStereoPanner();
 
   splitLP.connect(drumDelay).connect(drumAM).connect(drumPan).connect(master);
@@ -196,8 +220,8 @@ function setupAudio(){
   hornLFO.connect(lfoScaleHorn); drumLFO.connect(lfoScaleDrum);
   lfoScaleHorn.connect(hornPan.pan); lfoScaleDrum.connect(drumPan.pan);
 
-  /* Doppler depth (mellow) */
-  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0004; // v7/v8 mellow
+  // Mellow Doppler depth (from your earlier preference)
+  const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0004;
   const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.00025;
   lfoScaleHorn.connect(hornDelayScale).connect(hornDelay.delayTime);
   lfoScaleDrum.connect(drumDelayScale).connect(drumDelay.delayTime);
@@ -301,11 +325,13 @@ function startNote(note, velocity=100){
     p.connect(pg).connect(gate); p.start(); p.stop(ctx.currentTime+1);
   }
 
+  // === Expression gain stage (Fix #1): scale to add headroom ===
   const expr=parseFloat(document.getElementById('expr').value);
-  const exprG=ctx.createGain(); exprG.gain.value=expr;
+  const exprG=ctx.createGain(); exprG.gain.value = expr * 0.35; // tweak 0.25–0.45 to taste
+
   gate.connect(exprG).connect(organBus);
 
-  activeNotes.set(note,{gate,oscs,vibLinks});
+  activeNotes.set(note,{gate,oscs,vibLinks,exprG});
   heldCount++;
 }
 function stopNote(note){
@@ -321,7 +347,7 @@ function stopNote(note){
   heldCount=Math.max(0, heldCount-1);
 }
 
-/* ===== Build vertical drawbars ===== */
+/* ===== Build vertical drawbars with caps + 1–8 scale ===== */
 const drawbarsEl=document.getElementById('drawbars');
 function buildDrawbars(){
   drawbarsEl.innerHTML='';
@@ -364,14 +390,21 @@ document.getElementById('startBtn').addEventListener('click', async()=>{
   setDrive(parseFloat(document.getElementById('drive').value));
   setVibratoMode(document.getElementById('vibMode').value);
   setLeslie('chorale'); // default slow
-  log('Audio started. (v8)');
+  log('Audio started. (v11)');
 });
 document.getElementById('drive').addEventListener('input', e=>{ if(!started) return; setDrive(parseFloat(e.target.value)); });
-document.getElementById('expr').addEventListener('input', e=>{ if(!started) return; const v=parseFloat(e.target.value); activeNotes.forEach(n=> n.gate.gain.setTargetAtTime(v, ctx.currentTime, 0.03)); });
+
+// Update expression **per active note's exprG** (not the gate directly)
+document.getElementById('expr').addEventListener('input', e=>{
+  if(!started) return;
+  const v = parseFloat(e.target.value) * 0.35; // keep headroom
+  activeNotes.forEach(n => n.exprG.gain.setTargetAtTime(v, ctx.currentTime, 0.03));
+});
+
 document.getElementById('vibMode').addEventListener('change', e=>{ if(!started) return; setVibratoMode(e.target.value); });
 Array.from(document.querySelectorAll('[data-leslie]')).forEach(btn=> btn.addEventListener('click', ()=>{ if(!started) return; setLeslie(btn.getAttribute('data-leslie')); }));
 
-/* ===== MIDI (unchanged: CC64 is used for Leslie, not sustain) ===== */
+/* ===== MIDI (CC64 = Leslie) ===== */
 let midi, midiInSel=document.getElementById('midiIn'), currentInput;
 function handleMIDIMessage(e){
   const [st,d1,d2]=e.data; const type=st & 0xF0;
@@ -386,8 +419,10 @@ function handleMIDIMessage(e){
       wrap.querySelector('.vslider').value = 8 - notch;
       if(started){ activeNotes.forEach(n=> n.oscs[idx].gain.gain.setTargetAtTime(notch/8, ctx.currentTime, 0.01)); }
     } else if(cc===11){
-      const v=val/127; document.getElementById('expr').value=v;
-      if(started){ activeNotes.forEach(n=> n.gate.gain.setTargetAtTime(v, ctx.currentTime, 0.03)); }
+      const v=val/127;
+      document.getElementById('expr').value = v;
+      const scaled = v * 0.35;
+      if(started){ activeNotes.forEach(n=> n.exprG.gain.setTargetAtTime(scaled, ctx.currentTime, 0.03)); }
     } else if(cc===64){
       if(started) setLeslie(val>=64?'tremolo':'chorale');
     } else if(cc===1){
@@ -430,6 +465,8 @@ setupMIDI();
 /* ===== On-screen keyboard (C3..C5) with SUSTAIN ===== */
 (function(){
   const piano=document.getElementById('piano'); if(!piano) return;
+  const sustainBtn = document.getElementById('sustainBtn');
+
   const WHITE_W=32, BLACK_W=20, BLACK_H=112; const START=48, END=72;
   const isBlack=n=>[1,3,6,8,10].includes(n%12); const isWhite=n=>!isBlack(n);
   const whiteX=new Map(); let whites=0;
@@ -458,13 +495,11 @@ setupMIDI();
   const onscreenDown = new Set();   // notes currently held by mouse/touch
   const sustained = new Set();      // notes released while sustain is ON
 
-  const sustainBtn = document.getElementById('sustainBtn');
   sustainBtn.addEventListener('click', ()=>{
     sustainOn = !sustainOn;
     sustainBtn.setAttribute('aria-pressed', String(sustainOn));
     sustainBtn.textContent = 'Sustain: ' + (sustainOn ? 'ON' : 'OFF');
     if(!sustainOn){
-      // release all sustained notes that aren't physically held
       for(const n of Array.from(sustained)){
         if(!onscreenDown.has(n)) { stopNote(n); sustained.delete(n); }
       }
@@ -476,7 +511,7 @@ setupMIDI();
     const note=parseInt(el.dataset.note,10);
     el.classList.add('active');
     onscreenDown.add(note);
-    sustained.delete(note); // if it was in sustain bucket, it is now physically held again
+    sustained.delete(note);
     try{ if(typeof setupAudio==='function' && !started) setupAudio(); if(ctx && ctx.state==='suspended') await ctx.resume(); }catch(_){}
     if(typeof startNote==='function') startNote(note,110);
   };
@@ -486,7 +521,7 @@ setupMIDI();
     el.classList.remove('active');
     onscreenDown.delete(note);
     if(sustainOn){
-      sustained.add(note); // keep ringing until sustain is toggled off
+      sustained.add(note);
     }else{
       if(typeof stopNote==='function') stopNote(note);
       sustained.delete(note);
@@ -507,7 +542,7 @@ setupMIDI();
   },{passive:false});
   piano.addEventListener('touchmove',(e)=>{
     e.preventDefault();
-    piano.querySelectorAll('.key.active').forEach(release); // end prior touches
+    piano.querySelectorAll('.key.active').forEach(release);
     for(const t of e.changedTouches){
       const el=document.elementFromPoint(t.clientX,t.clientY)?.closest('.key'); if(el) press(el);
     }
@@ -520,4 +555,3 @@ setupMIDI();
 </script>
 </body>
 </html>
-
