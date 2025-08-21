@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Hammond-style Organ — v11 (Gain staged + Limiter)</title>
+<title>Hammond-style Organ — v12 (MIDI Logger build)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root { --bg:#0b0e11; --panel:#12171d; --accent:#3aa675; --text:#e8eef5; --muted:#9db0c3; --slot:#0e151b; }
@@ -61,14 +61,14 @@
   .key.black.active { background:linear-gradient(#2a7e59,#1f5d44); }
   .piano-label{ color:#9db0c3; font-size:12px; }
   #log{white-space:pre-wrap; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px;
-       color:#b5c9da; background:#0c1116; border:1px solid #1b2530; border-radius:8px; padding:10px; max-height:140px; overflow:auto}
+       color:#b5c9da; background:#0c1116; border:1px solid #1b2530; border-radius:8px; padding:10px; max-height:220px; overflow:auto}
 </style>
 </head>
 <body>
 <header>
   <h1>Hammond-style Organ</h1>
-  <p>Gain-staged for headroom • master compressor + limiter • vertical drawbars • Leslie • key click • percussion • V/C • MIDI + on-screen keyboard</p>
-  <div class="badge">v11</div>
+  <p>MIDI logger built-in • gain-staged + limiter • vertical drawbars • Leslie • key click • percussion • V/C • MIDI + on-screen keyboard</p>
+  <div class="badge">v12</div>
 </header>
 
 <div id="topbar">
@@ -134,13 +134,13 @@
 
 <div class="panel">
   <div class="section-title">MIDI + Log</div>
-  <div class="minor">Notes on any channel. CC20–28 drawbars, CC11 expression, CC64 = Leslie slow/fast, CC1 = V/C mode.</div>
+  <div class="minor">Move your wheel/switch and watch here + in the Console (F12). We’ll show CC#, value, pitch bend, notes, and device changes.</div>
   <div id="log" style="margin-top:10px"></div>
 </div>
 
 <script>
 /* ===== Utilities ===== */
-const log = (...a)=>{ const el=document.getElementById('log'); el.textContent += a.join(' ') + "\n"; el.scrollTop = el.scrollHeight; };
+const log = (...a)=>{ const el=document.getElementById('log'); el.textContent += a.join(' ') + "\\n"; el.scrollTop = el.scrollHeight; };
 const midiToFreq = n => 440 * Math.pow(2, (n - 69) / 12);
 
 /* Drawbar labels + color caps (Hammond B-3 style) */
@@ -176,24 +176,15 @@ function setupAudio(){
   /* === Master + dynamics chain === */
   master=ctx.createGain(); master.gain.value=0.9;
 
-  // Compressor: warms + tames peaks (Fix #3 part 1)
+  // Compressor + soft limiter (headroom & warmth)
   comp=ctx.createDynamicsCompressor();
-  comp.threshold.value=-24; // earlier start to compress
-  comp.knee.value=30;
-  comp.ratio.value=6;
-  comp.attack.value=0.003;
-  comp.release.value=0.25;
-
-  // Soft limiter: gentle clip guard (Fix #3 part 2)
-  limiter=ctx.createWaveShaper();
-  limiter.curve = makeSoftClipCurve(0.5); // 0..1 = more limiting
-  limiter.oversample='4x';
-
+  comp.threshold.value=-24; comp.knee.value=30; comp.ratio.value=6; comp.attack.value=0.003; comp.release.value=0.25;
+  limiter=ctx.createWaveShaper(); limiter.curve = makeSoftClipCurve(0.5); limiter.oversample='4x';
   master.connect(comp).connect(limiter).connect(ctx.destination);
 
   organBus=ctx.createGain();
 
-  // Slightly reduce pre-drive level for headroom (part of Fix #1)
+  // Headroom
   preDrive=ctx.createGain(); preDrive.gain.value=0.7;
 
   drive=ctx.createWaveShaper(); drive.curve=makeDriveCurve(parseFloat(document.getElementById('drive').value)); drive.oversample='4x';
@@ -220,7 +211,6 @@ function setupAudio(){
   hornLFO.connect(lfoScaleHorn); drumLFO.connect(lfoScaleDrum);
   lfoScaleHorn.connect(hornPan.pan); lfoScaleDrum.connect(drumPan.pan);
 
-  // Mellow Doppler depth (from your earlier preference)
   const hornDelayScale=ctx.createGain(); hornDelayScale.gain.value=0.0004;
   const drumDelayScale=ctx.createGain(); drumDelayScale.gain.value=0.00025;
   lfoScaleHorn.connect(hornDelayScale).connect(hornDelay.delayTime);
@@ -325,10 +315,9 @@ function startNote(note, velocity=100){
     p.connect(pg).connect(gate); p.start(); p.stop(ctx.currentTime+1);
   }
 
-  // === Expression gain stage (Fix #1): scale to add headroom ===
+  // Expression with headroom
   const expr=parseFloat(document.getElementById('expr').value);
-  const exprG=ctx.createGain(); exprG.gain.value = expr * 0.35; // tweak 0.25–0.45 to taste
-
+  const exprG=ctx.createGain(); exprG.gain.value = expr * 0.35;
   gate.connect(exprG).connect(organBus);
 
   activeNotes.set(note,{gate,oscs,vibLinks,exprG});
@@ -347,7 +336,7 @@ function stopNote(note){
   heldCount=Math.max(0, heldCount-1);
 }
 
-/* ===== Build vertical drawbars with caps + 1–8 scale ===== */
+/* ===== Build vertical drawbars ===== */
 const drawbarsEl=document.getElementById('drawbars');
 function buildDrawbars(){
   drawbarsEl.innerHTML='';
@@ -363,11 +352,11 @@ function buildDrawbars(){
     slot.appendChild(ticks);
 
     const cap=document.createElement('div'); cap.className='cap ' + DB_CAP[i];
-    cap.textContent = drawbarNotches[i]; // live 0..8
+    cap.textContent = drawbarNotches[i];
     slot.appendChild(cap);
 
     const s=document.createElement('input'); s.className='vslider'; s.type='range'; s.min=0; s.max=8; s.step=1;
-    s.value = 8 - drawbarNotches[i]; // invert so pull UP => louder
+    s.value = 8 - drawbarNotches[i];
     s.addEventListener('input',()=>{
       const ui = parseInt(s.value,10);
       const notch = 8 - ui;
@@ -390,24 +379,49 @@ document.getElementById('startBtn').addEventListener('click', async()=>{
   setDrive(parseFloat(document.getElementById('drive').value));
   setVibratoMode(document.getElementById('vibMode').value);
   setLeslie('chorale'); // default slow
-  log('Audio started. (v11)');
+  log('Audio started. (v12)');
 });
 document.getElementById('drive').addEventListener('input', e=>{ if(!started) return; setDrive(parseFloat(e.target.value)); });
-
-// Update expression **per active note's exprG** (not the gate directly)
 document.getElementById('expr').addEventListener('input', e=>{
   if(!started) return;
-  const v = parseFloat(e.target.value) * 0.35; // keep headroom
-  activeNotes.forEach(n => n.exprG.gain.setTargetAtTime(v, ctx.currentTime, 0.03));
+  const v = parseFloat(e.target.value) * 0.35;
+  activeNotes.forEach(n=> n.exprG.gain.setTargetAtTime(v, ctx.currentTime, 0.03));
 });
-
 document.getElementById('vibMode').addEventListener('change', e=>{ if(!started) return; setVibratoMode(e.target.value); });
 Array.from(document.querySelectorAll('[data-leslie]')).forEach(btn=> btn.addEventListener('click', ()=>{ if(!started) return; setLeslie(btn.getAttribute('data-leslie')); }));
 
-/* ===== MIDI (CC64 = Leslie) ===== */
+/* ===== MIDI + LOGGER ===== */
 let midi, midiInSel=document.getElementById('midiIn'), currentInput;
+
+function nameForStatus(status){
+  const t = status & 0xF0;
+  return (t===0x90)?'Note On':(t===0x80)?'Note Off':(t===0xB0)?'Control Change':(t===0xE0)?'Pitch Bend':'Other';
+}
+function hex(n){ return '0x'+n.toString(16).padStart(2,'0'); }
+
 function handleMIDIMessage(e){
-  const [st,d1,d2]=e.data; const type=st & 0xF0;
+  const [st,d1,d2]=e.data; const type=st & 0xF0; const ch=(st & 0x0F)+1;
+  // ---- Console + on-page log
+  const label = nameForStatus(st);
+  if(type===0xB0){
+    console.log(`MIDI CC ch${ch}: CC#${d1} value=${d2}`);
+    log(`CC ch${ch}: CC#${d1} = ${d2}`);
+  } else if(type===0xE0){
+    const bend = (d2<<7) | d1; // 0..16383, center 8192
+    console.log(`MIDI PitchBend ch${ch}: value=${bend}`);
+    log(`Pitch Bend ch${ch}: ${bend}`);
+  } else if(type===0x90){
+    console.log(`Note On ch${ch}: ${d1} vel=${d2}`);
+    log(`Note On ch${ch}: ${d1} vel=${d2}`);
+  } else if(type===0x80){
+    console.log(`Note Off ch${ch}: ${d1} vel=${d2}`);
+    log(`Note Off ch${ch}: ${d1}`);
+  } else {
+    console.log(`MIDI ${label} ch${ch}:`, st, d1, d2);
+    log(`${label} ch${ch}: ${hex(st)} ${d1} ${d2}`);
+  }
+
+  // ---- Existing behavior (unchanged): CC20–28 drawbars, CC11 expression, CC64 = Leslie slow/fast, CC1 = V/C
   if(type===0x90){ if(d2===0) stopNote(d1); else startNote(d1,d2); }
   else if(type===0x80){ stopNote(d1); }
   else if(type===0xB0){
@@ -419,27 +433,46 @@ function handleMIDIMessage(e){
       wrap.querySelector('.vslider').value = 8 - notch;
       if(started){ activeNotes.forEach(n=> n.oscs[idx].gain.gain.setTargetAtTime(notch/8, ctx.currentTime, 0.01)); }
     } else if(cc===11){
-      const v=val/127;
-      document.getElementById('expr').value = v;
+      const v=val/127; document.getElementById('expr').value=v;
       const scaled = v * 0.35;
       if(started){ activeNotes.forEach(n=> n.exprG.gain.setTargetAtTime(scaled, ctx.currentTime, 0.03)); }
     } else if(cc===64){
-      if(started) setLeslie(val>=64?'tremolo':'chorale');
+      if(started) setLeslie(val>=64?'tremolo':'chorale'); // (still mapped to Leslie for now)
     } else if(cc===1){
       const modes=['off','v1','v2','v3','c1','c2','c3'];
       const ix=Math.floor((val/127)*(modes.length-1)+0.0001);
       const mode=modes[ix]; document.getElementById('vibMode').value=mode;
       if(started) setVibratoMode(mode);
     }
-  } else if(type===0xC0){
-    if(d1===0){ drawbarNotches=[8,8,8,0,0,0,0,0,0]; buildDrawbars(); }
-    else if(d1===1){ drawbarNotches=[8,8,8,8,0,0,0,0,0]; buildDrawbars(); }
-    else if(d1===2){ drawbarNotches=[8,8,8,0,0,0,0,0,8]; buildDrawbars(); }
   }
 }
+
 async function setupMIDI(){
-  if(!('requestMIDIAccess' in navigator)){ log('WebMIDI not supported (use Chrome/Edge over HTTPS).'); return; }
-  try{ midi=await navigator.requestMIDIAccess({sysex:false}); }catch(e){ log('MIDI access denied by browser.'); return; }
+  if(!('requestMIDIAccess' in navigator)){
+    log('WebMIDI not supported (use Chrome/Edge over HTTPS).'); return;
+  }
+  let access;
+  try{
+    access = await navigator.requestMIDIAccess({sysex:false});
+  }catch(e){
+    log('MIDI access denied by browser. Check site permissions in the address bar.'); return;
+  }
+
+  function attach(input){
+    if(!input) return;
+    input.onmidimessage = handleMIDIMessage;
+    log('MIDI input connected: ' + input.name);
+    console.log('[MIDI] input connected:', input.name);
+  }
+  function detach(input){
+    if(!input) return;
+    input.onmidimessage = null;
+    log('MIDI input disconnected: ' + input.name);
+    console.log('[MIDI] input disconnected:', input.name);
+  }
+
+  midi = access;
+
   function refresh(){
     midiInSel.innerHTML='';
     for(const input of midi.inputs.values()){
@@ -449,20 +482,37 @@ async function setupMIDI(){
       const opt=document.createElement('option'); opt.textContent='No MIDI inputs'; opt.value=''; midiInSel.appendChild(opt);
     }
   }
-  refresh(); midi.onstatechange=refresh;
+  refresh();
+
+  midi.onstatechange = (ev)=>{
+    const port = ev.port;
+    if(port.type==='input'){
+      if(port.state==='connected' && port.connection!=='open'){
+        // will appear after refresh
+      }
+      refresh();
+      log(`MIDI ${port.state}: ${port.name}`);
+      console.log(`[MIDI] ${port.state}: ${port.name}`);
+    }
+  };
+
   midiInSel.addEventListener('change', ()=>{
-    if(currentInput) currentInput.onmidimessage=null;
-    const id=midiInSel.value; currentInput=[...midi.inputs.values()].find(i=>i.id===id);
-    if(currentInput){ currentInput.onmidimessage=handleMIDIMessage; log('MIDI input:', currentInput.name); }
+    if(currentInput) detach(currentInput);
+    const id=midiInSel.value;
+    currentInput=[...midi.inputs.values()].find(i=>i.id===id);
+    attach(currentInput);
   });
+
   if(midi.inputs.size){
     const first=midi.inputs.values().next().value; midiInSel.value=first.id;
-    currentInput=first; currentInput.onmidimessage=handleMIDIMessage; log('MIDI input:', currentInput.name);
+    currentInput=first; attach(currentInput);
+  } else {
+    log('No MIDI inputs detected. Connect your keyboard and reopen this page, or reselect from the menu above.');
   }
 }
 setupMIDI();
 
-/* ===== On-screen keyboard (C3..C5) with SUSTAIN ===== */
+/* ===== On-screen keyboard (C3..C5) with SUSTAIN button ===== */
 (function(){
   const piano=document.getElementById('piano'); if(!piano) return;
   const sustainBtn = document.getElementById('sustainBtn');
@@ -490,7 +540,7 @@ setupMIDI();
     }
   }
 
-  // Sustain state (on-screen only)
+  // On-screen sustain
   let sustainOn = false;
   const onscreenDown = new Set();   // notes currently held by mouse/touch
   const sustained = new Set();      // notes released while sustain is ON
